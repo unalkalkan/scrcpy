@@ -4,6 +4,7 @@
 #include "common.h"
 
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <SDL3/SDL.h>
 #include <libavcodec/avcodec.h>
@@ -51,6 +52,9 @@ struct sc_screen {
 
     struct sc_texture tex;
     struct sc_upscaler upscaler;
+    // SCRCPY_LATENCY_LOG: one line per frame drawn (see latency/measure.py)
+    FILE *latency_log;
+    void (*gl_finish)(void);
     enum sc_upscale upscale; // switched by MOD+u
     struct sc_input_manager im;
     struct sc_mouse_capture mc; // only used in mouse relative mode

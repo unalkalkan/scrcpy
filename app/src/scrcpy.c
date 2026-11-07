@@ -593,6 +593,10 @@ scrcpy(struct scrcpy_options *options) {
     }
 
     bool has_video_buffer = options->video_buffer;
+    // SCRCPY_LATENCY_LOG (see latency/measure.py) logs the receive date of
+    // each frame drawn
+    const char *latency_log = getenv("SCRCPY_LATENCY_LOG");
+    bool need_recv_date = latency_log && *latency_log;
 #ifdef HAVE_V4L2
     has_video_buffer |= options->v4l2_buffer;
 #endif
@@ -602,7 +606,7 @@ scrcpy(struct scrcpy_options *options) {
             .on_ended = sc_video_demuxer_on_ended,
         };
         // If a video buffer is present, then the recv date must be set
-        bool set_recv_date = has_video_buffer;
+        bool set_recv_date = has_video_buffer || need_recv_date;
         sc_demuxer_init(&s->video_demuxer, "video", s->server.video_socket,
                         set_recv_date, &video_demuxer_cbs, NULL);
     }
@@ -868,7 +872,7 @@ aoa_complete:
 
         // If a video buffer is present, then the recv date must be forwarded
         // from the AVPacket to the AVFrame
-        bool copy_opaque = has_video_buffer;
+        bool copy_opaque = has_video_buffer || need_recv_date;
         if (!sc_decoder_init(&s->video_decoder, "video", &s->hwdec, copy_opaque,
                              &decoder_cbs, NULL)) {
             goto end;

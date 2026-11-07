@@ -1,6 +1,8 @@
 #include "screen.h"
 
 #include <assert.h>
+#include <inttypes.h>
+#include <stdlib.h>
 #include <string.h>
 #include <SDL3/SDL.h>
 
@@ -720,6 +722,26 @@ sc_screen_init(struct sc_screen *screen,
         goto error_destroy_renderer;
     }
 
+    screen->latency_log = NULL;
+    screen->gl_finish = NULL;
+    const char *latency_path = getenv("SCRCPY_LATENCY_LOG");
+    if (latency_path && *latency_path) {
+        screen->latency_log = fopen(latency_path, "w");
+        if (screen->latency_log) {
+            // A frame is timed once the GPU has finished drawing it
+            screen->gl_finish = (void (*)(void))
+                SDL_GL_GetProcAddress("glFinish");
+            fprintf(screen->latency_log,
+                    "# pts_us recv_us drawn_us: device capture date (device "
+                    "CLOCK_MONOTONIC), receive and drawn dates (local "
+                    "CLOCK_MONOTONIC)%s\n",
+                    screen->gl_finish ? "" : ", drawn without glFinish");
+            LOGI("Logging frame latencies to %s", latency_path);
+        } else {
+            LOGW("Could not open %s", latency_path);
+        }
+    }
+
     // Nothing to release until the first upscaled frame
     sc_upscaler_init(&screen->upscaler, screen->renderer,
                      params->upscale_sharpness, params->upscale_vsr_quality);
@@ -824,6 +846,9 @@ sc_screen_init(struct sc_screen *screen,
     return true;
 
 error_destroy_texture:
+    if (screen->latency_log) {
+        fclose(screen->latency_log);
+    }
     sc_texture_destroy(&screen->tex);
 error_destroy_renderer:
 #ifdef SC_DISPLAY_FORCE_OPENGL_CORE_PROFILE
@@ -918,6 +943,9 @@ sc_screen_destroy(struct sc_screen *screen) {
 #endif
     if (screen->disconnect_started) {
         sc_disconnect_destroy(&screen->disconnect);
+    }
+    if (screen->latency_log) {
+        fclose(screen->latency_log);
     }
     sc_upscaler_destroy(&screen->upscaler);
     sc_texture_destroy(&screen->tex);
@@ -1025,6 +1053,18 @@ sc_screen_set_orientation(struct sc_screen *screen,
     sc_screen_render(screen, true);
 }
 
+static void
+sc_screen_log_latency(struct sc_screen *screen, const AVFrame *frame) {
+    if (screen->gl_finish) {
+        screen->gl_finish();
+    }
+    sc_tick drawn = sc_tick_now();
+    sc_tick recv = frame->opaque_ref
+                 ? *(const sc_tick *) frame->opaque_ref->data : -1;
+    fprintf(screen->latency_log, "%" PRIi64 " %" PRItick " %" PRItick "\n",
+            frame->pts, recv, drawn);
+}
+
 static bool
 sc_screen_apply_frame(struct sc_screen *screen, bool can_resize) {
     assert(screen->video);
@@ -1064,6 +1104,10 @@ sc_screen_apply_frame(struct sc_screen *screen, bool can_resize) {
     }
 
     sc_screen_render(screen, false);
+
+    if (screen->latency_log) {
+        sc_screen_log_latency(screen, frame);
+    }
     return true;
 }
 
