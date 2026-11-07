@@ -252,6 +252,34 @@ sc_screen_update_content_rect(struct sc_screen *screen) {
                          &screen->rect);
 }
 
+// Upscale the frame to the size it is drawn at. On success, round the
+// geometry to that size, so that the result is drawn 1:1.
+static SDL_Texture *
+sc_screen_upscale(struct sc_screen *screen, SDL_Texture *texture,
+                  struct sc_size frame_size, SDL_FRect *geometry) {
+    assert(screen->upscale != SC_UPSCALE_OFF);
+    // the output size before rotation
+    bool swap = sc_orientation_is_swap(screen->orientation);
+    float w = swap ? geometry->h : geometry->w;
+    float h = swap ? geometry->w : geometry->h;
+    if (w < 1 || h < 1 || w > 0xFFFF || h > 0xFFFF) {
+        return NULL;
+    }
+
+    struct sc_size size = {
+        .width = (uint16_t) (w + 0.5f),
+        .height = (uint16_t) (h + 0.5f),
+    };
+    SDL_Texture *upscaled =
+        sc_upscaler_process(&screen->upscaler, screen->upscale, texture,
+                            frame_size, size);
+    if (upscaled) {
+        geometry->w = swap ? size.height : size.width;
+        geometry->h = swap ? size.width : size.height;
+    }
+    return upscaled;
+}
+
 // render the texture to the renderer
 //
 // Set the update_content_rect flag if the window or content size may have
@@ -301,6 +329,15 @@ sc_screen_render(struct sc_screen *screen, bool update_content_rect) {
         frame_rect.w = frame_size.width;
         frame_rect.h = frame_size.height;
         srcrect = &frame_rect;
+
+        if (screen->upscale != SC_UPSCALE_OFF) {
+            SDL_Texture *upscaled =
+                sc_screen_upscale(screen, texture, frame_size, &geometry);
+            if (upscaled) {
+                texture = upscaled;
+                srcrect = NULL;
+            }
+        }
     }
 
     bool ok = false;
@@ -341,6 +378,39 @@ sc_screen_render(struct sc_screen *screen, bool update_content_rect) {
 
 end:
     sc_sdl_render_present(renderer);
+}
+
+void
+sc_screen_toggle_upscale(struct sc_screen *screen) {
+    struct sc_upscaler *up = &screen->upscaler;
+    switch (screen->upscale) {
+        case SC_UPSCALE_OFF:
+            screen->upscale = SC_UPSCALE_NIS;
+            break;
+        case SC_UPSCALE_NIS:
+            screen->upscale = SC_UPSCALE_VSR;
+            break;
+        default:
+            screen->upscale = SC_UPSCALE_OFF;
+            break;
+    }
+
+    if (screen->upscale == SC_UPSCALE_OFF) {
+        LOGI("Upscaling disabled");
+    } else if (up->failed) {
+        LOGW("Upscaling unavailable (see the errors above)");
+    } else if (screen->upscale == SC_UPSCALE_NIS) {
+        LOGI("Upscaling: NIS (sharpness %d%%)",
+             (int) (up->sharpness * 100 + 0.5f));
+    } else if (up->vsr_failed) {
+        LOGW("Upscaling: VSR unavailable (see above), NIS is used");
+    } else {
+        LOGI("Upscaling: VSR (quality %u)", up->vsr_quality);
+    }
+
+    if (screen->window_shown) {
+        sc_screen_render(screen, false);
+    }
 }
 
 static void
@@ -650,6 +720,11 @@ sc_screen_init(struct sc_screen *screen,
         goto error_destroy_renderer;
     }
 
+    // Nothing to release until the first upscaled frame
+    sc_upscaler_init(&screen->upscaler, screen->renderer,
+                     params->upscale_sharpness, params->upscale_vsr_quality);
+    screen->upscale = params->upscale;
+
     ok = SDL_StartTextInput(screen->window);
     if (!ok) {
         LOGE("Could not enable text input: %s", SDL_GetError());
@@ -844,6 +919,7 @@ sc_screen_destroy(struct sc_screen *screen) {
     if (screen->disconnect_started) {
         sc_disconnect_destroy(&screen->disconnect);
     }
+    sc_upscaler_destroy(&screen->upscaler);
     sc_texture_destroy(&screen->tex);
     av_frame_free(&screen->frame);
 #ifdef SC_DISPLAY_FORCE_OPENGL_CORE_PROFILE

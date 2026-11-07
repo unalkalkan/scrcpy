@@ -19,6 +19,7 @@
 #include "mouse_capture.h"
 #include "options.h"
 #include "texture.h"
+#include "upscaler.h"
 #include "trait/key_processor.h"
 #include "trait/frame_sink.h"
 #include "trait/mouse_processor.h"
@@ -49,6 +50,8 @@ struct sc_screen {
     } bg;
 
     struct sc_texture tex;
+    struct sc_upscaler upscaler;
+    enum sc_upscale upscale; // switched by MOD+u
     struct sc_input_manager im;
     struct sc_mouse_capture mc; // only used in mouse relative mode
     struct sc_fps_counter fps_counter;
@@ -147,6 +150,9 @@ struct sc_screen_params {
     bool mipmaps;
 
     enum sc_hwdec_mode hwdec_mode;
+    enum sc_upscale upscale;
+    uint8_t upscale_sharpness; // 0 to 100
+    uint8_t upscale_vsr_quality;
 
     bool fullscreen;
     bool start_fps_counter;
@@ -168,6 +174,10 @@ sc_screen_join(struct sc_screen *screen);
 // destroy window, renderer and texture (if any)
 void
 sc_screen_destroy(struct sc_screen *screen);
+
+// switch upscaling: off, NIS, VSR (MOD+u)
+void
+sc_screen_toggle_upscale(struct sc_screen *screen);
 
 // hide the window
 //

@@ -112,6 +112,9 @@ enum {
     OPT_IGNORE_VIDEO_ENCODER_CONSTRAINTS,
     OPT_NO_TERMINAL_TITLE,
     OPT_HWDEC,
+    OPT_UPSCALE,
+    OPT_UPSCALE_SHARPNESS,
+    OPT_UPSCALE_VSR_QUALITY,
 };
 
 struct sc_option {
@@ -949,6 +952,41 @@ static const struct sc_option options[] = {
                 "establishing the tunnel will be used.",
     },
     {
+        .longopt_id = OPT_UPSCALE,
+        .longopt = "upscale",
+        .argdesc = "type",
+        .text = "Upscale the video on the computer when the window is larger "
+                "than the video, right before each frame is drawn.\n"
+                "Possible values are \"off\", \"nis\" (NVIDIA Image "
+                "Scaling: directional scaling and adaptive sharpening, a "
+                "compute shader) and \"vsr\" (NVIDIA Video Super "
+                "Resolution: AI upscaling that also removes compression "
+                "artifacts, on CUDA; it needs the NVIDIA Video Effects SDK "
+                "libraries in LD_LIBRARY_PATH, and falls back to \"nis\" "
+                "without them). Both require VA-API decoding with an OpenGL "
+                "4.3+ renderer.\n"
+                "MOD+u switches between off, nis and vsr at any time.\n"
+                "Default is \"off\".",
+    },
+    {
+        .longopt_id = OPT_UPSCALE_SHARPNESS,
+        .longopt = "upscale-sharpness",
+        .argdesc = "value",
+        .text = "Set the sharpening of --upscale=nis, from 0 (none) to 100.\n"
+                "Default is 50.",
+    },
+    {
+        .longopt_id = OPT_UPSCALE_VSR_QUALITY,
+        .longopt = "upscale-vsr-quality",
+        .argdesc = "value",
+        .text = "Set the model of --upscale=vsr (the VSR QualityLevel): 0 "
+                "(bicubic, not AI), 1 to 4 (low, medium, high, ultra), 16 to "
+                "19 (the same for high-bitrate sources), 21 (streaming "
+                "medium) or 23 (streaming ultra). Within each group, a higher "
+                "level is slower.\n"
+                "Default is 21.",
+    },
+    {
         .shortopt = 'v',
         .longopt = "version",
         .text = "Print the version of scrcpy.",
@@ -1203,6 +1241,10 @@ static const struct sc_shortcut shortcuts[] = {
     {
         .shortcuts = { "MOD+i" },
         .text = "Enable/disable FPS counter (print frames/second in logs)",
+    },
+    {
+        .shortcuts = { "MOD+u" },
+        .text = "Switch upscaling: off, NIS, VSR (see --upscale)",
     },
     {
         .shortcuts = { "Ctrl+click-and-move" },
@@ -2548,6 +2590,60 @@ parse_hwdec_mode(const char *optarg, enum sc_hwdec_mode *mode) {
 }
 
 static bool
+parse_upscale(const char *optarg, enum sc_upscale *upscale) {
+    if (!strcmp(optarg, "off")) {
+        *upscale = SC_UPSCALE_OFF;
+        return true;
+    }
+
+    if (!strcmp(optarg, "nis")) {
+        *upscale = SC_UPSCALE_NIS;
+        return true;
+    }
+
+    if (!strcmp(optarg, "vsr")) {
+        *upscale = SC_UPSCALE_VSR;
+        return true;
+    }
+
+    LOGE("Unsupported upscale type: %s (expected off, nis or vsr)", optarg);
+    return false;
+}
+
+static bool
+parse_upscale_vsr_quality(const char *s, uint8_t *quality) {
+    long value;
+    bool ok = parse_integer_arg(s, &value, false, 0, 23, "VSR quality");
+    if (!ok) {
+        return false;
+    }
+
+    // 5-7, 20 and 22 are reserved; 8-15 (denoise, deblur) do not upscale
+    bool upscaling = value <= 4 || (value >= 16 && value <= 19)
+                  || value == 21 || value == 23;
+    if (!upscaling) {
+        LOGE("Unsupported VSR quality: %ld (expected 0-4, 16-19, 21 or 23)",
+             value);
+        return false;
+    }
+
+    *quality = (uint8_t) value;
+    return true;
+}
+
+static bool
+parse_upscale_sharpness(const char *s, uint8_t *sharpness) {
+    long value;
+    bool ok = parse_integer_arg(s, &value, false, 0, 100, "upscale sharpness");
+    if (!ok) {
+        return false;
+    }
+
+    *sharpness = (uint8_t) value;
+    return true;
+}
+
+static bool
 parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
                        const char *optstring, const struct option *longopts) {
     struct scrcpy_options *opts = &args->opts;
@@ -3007,6 +3103,23 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
                 break;
             case OPT_HWDEC:
                 if (!parse_hwdec_mode(optarg, &opts->hwdec_mode)) {
+                    return false;
+                }
+                break;
+            case OPT_UPSCALE:
+                if (!parse_upscale(optarg, &opts->upscale)) {
+                    return false;
+                }
+                break;
+            case OPT_UPSCALE_SHARPNESS:
+                if (!parse_upscale_sharpness(optarg,
+                                             &opts->upscale_sharpness)) {
+                    return false;
+                }
+                break;
+            case OPT_UPSCALE_VSR_QUALITY:
+                if (!parse_upscale_vsr_quality(optarg,
+                                               &opts->upscale_vsr_quality)) {
                     return false;
                 }
                 break;

@@ -839,6 +839,9 @@ aoa_complete:
             .orientation = options->display_orientation,
             .mipmaps = options->mipmaps,
             .hwdec_mode = options->hwdec_mode,
+            .upscale = options->upscale,
+            .upscale_sharpness = options->upscale_sharpness,
+            .upscale_vsr_quality = options->upscale_vsr_quality,
             .fullscreen = options->fullscreen,
             .start_fps_counter = options->start_fps_counter,
         };

@@ -525,6 +525,11 @@ sc_input_manager_process_key(struct sc_input_manager *im,
                     switch_fps_counter_state(im);
                 }
                 return;
+            case SDLK_U:
+                if (video && !shift && !repeat && down) {
+                    sc_screen_toggle_upscale(im->screen);
+                }
+                return;
             case SDLK_Q:
                 sc_push_event(SDL_EVENT_QUIT);
                 return;

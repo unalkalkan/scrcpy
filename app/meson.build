@@ -36,6 +36,7 @@ src = [
     'src/sdl_hints.c',
     'src/server.c',
     'src/texture.c',
+    'src/upscaler.c',
     'src/version.c',
     'src/video_regulator.c',
     'src/hid/hid_gamepad.c',
@@ -110,6 +111,15 @@ if v4l2_support
     src += [ 'src/v4l2_sink.c' ]
 endif
 
+# NVIDIA Image Scaling compute shader, embedded as a C string
+nis_glsl = custom_target('nis_scaler_glsl',
+    input: 'src/nis/NIS_Scaler.h',
+    output: 'nis_scaler_glsl.inc',
+    command: [find_program('python3'), files('src/nis/embed_glsl.py'),
+              '@INPUT@', '@OUTPUT@', 'sc_nis_scaler_glsl'],
+)
+src += nis_glsl
+
 vaapi_support = get_option('vaapi') and host_machine.system() == 'linux'
 if vaapi_support
     src += [ 'src/interop/interop_vaapi.c' ]
@@ -174,6 +184,17 @@ if usb_support
     dependencies += dependency('libusb-1.0', static: static)
 endif
 
+# NVIDIA Video Super Resolution (--upscale=vsr): CUDA and the Video Effects SDK
+# are loaded at runtime, only the ffnvcodec headers are needed
+ffnvcodec_dep = dependency('ffnvcodec', required: false)
+vsr_support = host_machine.system() == 'linux' and ffnvcodec_dep.found()
+if vsr_support
+    src += [ 'src/vsr.c' ]
+    dependencies += ffnvcodec_dep.partial_dependency(compile_args: true,
+                                                     includes: true)
+    dependencies += cc.find_library('dl', required: false)
+endif
+
 if host_machine.system() == 'windows'
     dependencies += cc.find_library('mingw32')
     dependencies += cc.find_library('ws2_32')
@@ -221,6 +242,9 @@ conf.set('HAVE_V4L2', v4l2_support)
 
 # enable VA-API hardware decoding (linux only)
 conf.set('HAVE_VAAPI', vaapi_support)
+
+# enable NVIDIA Video Super Resolution
+conf.set('HAVE_VSR', vsr_support)
 
 # enable D3D11 hardware decoding (windows only)
 conf.set('HAVE_D3D11VA', d3d11va_support)
